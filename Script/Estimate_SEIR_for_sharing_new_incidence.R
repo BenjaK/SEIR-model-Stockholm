@@ -170,7 +170,7 @@ Atol <- 1e-8
 Rtol <- 1e-10
 
 logit <- function(p) {
-  log(p) / log(1 - p)
+  log(p) - log(1 - p)
 }
 
 expit <- function(x) {
