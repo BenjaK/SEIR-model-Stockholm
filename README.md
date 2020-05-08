@@ -28,6 +28,8 @@ improvements to their code. I list my findings below.
     resulting in a pretty good speedup.
   - Uncertainty estimates are calculated for more quantities, such as
     the infectivity.
+  - One can now download the latest incidence data directly from
+    Folkhälsomyndigheten rather than using the original dataset.
 
 ## Cosmetic changes
 
