@@ -1,9 +1,5 @@
 
 
-
-# Remove workspace
-rm(list = ls(all=TRUE))
-
 heading <- "
 #------------------------------------------------------------------------------------
 #
@@ -158,16 +154,20 @@ Region_population <- Region_population %>%
 ## iter := In optimisation, how many iterations/guesses that are run.
 ## eta := rate of leaving incubation period. Denoted rho in report.
 
+globals <- list(
+  eta = 1 / 5.1, # Rate of leaving incubation period. Denoted rho in the report.
+  gamma = 1 / 5, # Infectious period
+  p_symp = 0.0127, # Fraction reported cases. Denoted p_r in report. 
+  p_lower_inf = 1, # How much lower infectivity non-reported cases have. Denoted q_o in report.
+  wfh_date = as.Date("2020-03-16"),
+  # Tolerances for ode and optimisation. 
+  Atol = 1e-8,
+  Rtol = 1e-10
+  
+)
+globals$p_asymp <- 1 - globals$p_symp
+globals$days_from_wfh_date <- as.integer(globals$wfh_date - as.Date("2019-12-31"))
 
-
-eta_value    <- 1 / 5.1
-gammaD_value <- 1 / 5
-
-## Tolerance for ode and optimisation. 
-## This tolerance not always needed but better to be safe even though it takes a bit longer!
-## For faster analysis use different tolerance or use default values.
-Atol <- 1e-8
-Rtol <- 1e-10
 
 logit <- function(p) {
   log(p) - log(1 - p)
@@ -186,9 +186,6 @@ Namedate <- seq.Date(as.Date("2020-01-01"),
                      as.Date("2021-01-01"), 
                      by = "month")
 dayatyear <- as.integer(Namedate - as.Date("2019-12-31"))
-
-wfh_date <- as.Date("2020-03-16")
-days_from_wfh_date <- as.integer(wfh_date - as.Date("2019-12-31"))
 
 #' The time-dependent infectivity rate.
 #' 
@@ -227,12 +224,12 @@ Basic_repr <- function(t, t_b, delta, epsilon, theta, gamma, p_symp,
 #' @param wfh_date
 #' @param non_reported
 Stockholm_SEIR <- function(
-    p_symp = 0.5, 
-    p_lower_inf = 0.5, 
-    gammaD = gammaD_value, 
-    eta = eta_value, 
+    p_symp = globals$p_symp, 
+    p_lower_inf = globals$p_lower_inf, 
+    gamma = globals$gamma, 
+    eta = globals$eta, 
     iter = 20,
-    .wfh_date = as.Date("2020-03-16"),
+    .wfh_date = globals$wfh_date,
     non_reported = FALSE) {
   
   ## Population size Stockholm
@@ -270,9 +267,9 @@ Stockholm_SEIR <- function(
       dE <- beta(time, t_b, delta, epsilon, theta) * S * I_symp / N + 
             p_lower_inf * beta(time, t_b, delta, epsilon, theta) * S * I_asymp/N - 
             eta * E
-      dI_symp <- p_symp * eta * E - gammaD * I_symp
-      dI_asymp <- (1 - p_symp) * eta * E - gammaD * I_asymp
-      dR <- gammaD * (I_symp + I_asymp)
+      dI_symp <- p_symp * eta * E - gamma * I_symp
+      dI_asymp <- (1 - p_symp) * eta * E - gamma * I_asymp
+      dR <- gamma * (I_symp + I_asymp)
       dx <- c(dS, dE, dI_symp, dI_asymp, dR)
       list(dx)
     }
@@ -308,10 +305,10 @@ Stockholm_SEIR <- function(
                  theta = exp(parameters["log_theta"]))
     
     Dummy_infectivity <- beta(t = c(0:700), 
-                                        t_b,
-                                        delta = pars$delta, 
-                                        epsilon = pars$epsilon,  
-                                        theta = pars$theta)
+                              t_b,
+                              delta = pars$delta, 
+                              epsilon = pars$epsilon,  
+                              theta = pars$theta)
     # if the infectivity is negative, throw away guess
     if (min(Dummy_infectivity) < 0) {
       res <- 10^12
@@ -324,8 +321,8 @@ Stockholm_SEIR <- function(
                  times = Day, 
                  func = model, 
                  parms = pars, 
-                 atol = Atol, 
-                 rtol = Rtol)
+                 atol = globals$Atol, 
+                 rtol = globals$Rtol)
       
       fit_S <- out[ , "S"]
       fit_E <- out[ , "E"]
@@ -349,12 +346,12 @@ Stockholm_SEIR <- function(
   
   fitter <- function(x) {
     Guess <- Guesses()
-    conl <- list(maxit = 1000, abstol = Atol, reltol = Rtol)
+    conl <- list(maxit = 1000, abstol = globals$Atol, reltol = globals$Rtol)
     
     Opt <- tryCatch({
       optim(Guess, RSS, control = list(conl), hessian = TRUE)
     }, error = function(e) {
-      list(convergence = 0)
+      list(convergence = 1)
       message("optim error with the following message: ")
       message(e)
     },
@@ -371,7 +368,7 @@ Stockholm_SEIR <- function(
       Opt <- tryCatch({
         optim(Guess, RSS, control = list(conl), hessian = TRUE)
       }, error = function(e) {
-        list(convergence = 0)
+        list(convergence = 100)
         message("optim error with the following message: ")
         message(e)
       },
@@ -401,7 +398,7 @@ Stockholm_SEIR <- function(
                theta = unname(exp(Opt_par_transformed["log_theta"])))
   return(list(args = list(p_symp = p_symp, 
                           p_lower_inf = p_lower_inf, 
-                          gammaD = gammaD, 
+                          gamma = gamma, 
                           eta = eta, 
                           iter = iter,
                           .wfh_date = .wfh_date,
@@ -426,21 +423,9 @@ Stockholm_SEIR <- function(
 # Analysis
 #---------------------------------------------------------------------------------------------------
 
-
-gammaD <- gammaD_value
-eta <- eta_value
-
-
-# Analysis  p_symp_use <- 0.0127
-# Analysis  p_lower_inf_use <- 1, 0.55, 0.11
-p_symp_use      <- 0.0127
-p_asymp_use     <- 1 - p_symp_use
-p_lower_inf_use <- 1
-
-
-Est_par_model <- Stockholm_SEIR(p_symp = p_symp_use, 
-                                iter=10,
-                                p_lower_inf = p_lower_inf_use)
+Est_par_model <- Stockholm_SEIR(p_symp = globals$p_symp, 
+                                iter=100,
+                                p_lower_inf = globals$p_lower_inf)
 
 # Days of incidence
 Day <- Est_par_model$Day
@@ -484,7 +469,7 @@ RSS_value
 
 
 
-t <- (Day[1]):(Day[length(Day)]+14+11) # time in days
+t <- (Day[1]):365 # time in days
 t_date <- as.Date("2019-12-31") + t
 fit <- ode(y = init, times = t, func = SEIR_model , parms = Opt_par)[ , ] %>%
   as_tibble() %>%
@@ -500,17 +485,11 @@ fit_I <- fit_I_symp + fit_I_asymp
 fit_I_E <- fit_E + fit_I
 fit_cum_inf <- N - fit_S
 
-## The mean prevalence same days as the Hälsorapport Stockholmsstudien (27th March to 3rd April)
-Smittsamma <- fit_I_symp + fit_I_asymp #+ fit_E
-SmittsammaF <-  Smittsamma[40:47]
-mean(SmittsammaF/N)
-
-
 
 ## Look at the estimated reported cases and fitted
 
-fitted_incidence <- p_symp_use * fit_E * eta
-fitted_incidence_non_report  <- (1 - p_symp_use) * fit_E * eta
+fitted_incidence <- globals$p_symp * fit_E * globals$eta
+fitted_incidence_non_report  <- (1 - globals$p_symp) * fit_E * globals$eta
 
 df_incidence <- df_stockholm %>% 
   mutate(Type = "Observed") %>%
@@ -526,6 +505,7 @@ df_incidence <- df_stockholm %>%
                                         "Fitted (Unreported)")))
 
 plot_fitted_incidence <- df_incidence %>%
+  filter(Date <= "2020-07-31") %>%
   filter(Type != "Fitted (Unreported)") %>%
   ggplot() + 
   geom_line(aes(x = Date, y = Incidence, color = Type, size = Type)) + 
@@ -540,6 +520,7 @@ plot_fitted_incidence <- df_incidence %>%
   theme_hc() +
   theme(legend.position = "top", legend.title = element_blank()) +
   theme(axis.title.y = element_text(angle = 0, vjust=1.05, margin = margin(l=10)))
+plot_fitted_incidence
 
 ggsave("./Results/Figures/fitted_incidence.png",
        plot_fitted_incidence)
@@ -570,10 +551,6 @@ par_sims[, 1] <- expit(par_sims[, 1])
 par_sims[, 3] <- exp(par_sims[, 3])
 colnames(par_sims) <- names(Opt_par)
 
-R0.v.Dag1 <- numeric(n_sims)
-R0.v.DagSista <- numeric(n_sims)
-
-
 sims_df_raw <- furrr::future_map_dfr(1:n_sims, function(n) {
   df1 <- tibble(
     iteration = n,
@@ -581,16 +558,16 @@ sims_df_raw <- furrr::future_map_dfr(1:n_sims, function(n) {
     Date = fit$Date,
     R0 = map(fit$Day, function(t) {
       Basic_repr(t, 
-                 t_b = days_from_wfh_date,
+                 t_b = as.integer(Est_par_model$args$.wfh_date - as.Date("2019-12-31")),
                  delta = par_sims[n, "delta"], 
                  epsilon = par_sims[n, "epsilon"], 
                  theta = par_sims[n, "theta"], 
-                 gamma = Est_par_model$args$gammaD,
+                 gamma = Est_par_model$args$gamma,
                  p_symp = Est_par_model$args$p_symp,
                  p_lower_inf = Est_par_model$args$p_lower_inf)
       }) %>% unlist()) %>%
     mutate(Infectivity = beta(t = Day, 
-                              t_b = days_from_wfh_date,
+                              t_b = as.integer(Est_par_model$args$.wfh_date - as.Date("2019-12-31")),
                               delta = par_sims[n, "delta"], 
                               epsilon = par_sims[n, "epsilon"],  
                               theta = par_sims[n, "theta"]))
@@ -619,6 +596,7 @@ sims_df <- sims_df_raw %>%
 # Look at the estimated infectivity and basic reproductive number
 
 plot_R0 <- sims_df %>%
+  filter(Date <= "2020-04-15") %>%
   filter(name == "R0") %>%
   ggplot(aes(x = Date)) +
   geom_line(aes(y = `50%`), size = 1.05) +
@@ -630,9 +608,11 @@ plot_R0 <- sims_df %>%
           glue("Black line shows median estimate,\n",
                "shaded regions show 50%, 90% and 95% uncertainty intervals ",
                "in order from darkest to lightest.")) +
-  theme_hc()
+  theme_hc() +
+  theme(axis.title.y = element_text(angle = 0, vjust=1.05, margin = margin(l=10)))
 
 plot_infectivity <- sims_df %>%
+  filter(Date <= "2020-04-15") %>%
   filter(name == "Infectivity") %>%
   ggplot(aes(x = Date)) +
   geom_line(aes(y = `50%`), size = 1.05) +
@@ -644,9 +624,11 @@ plot_infectivity <- sims_df %>%
   #         glue("Black line shows median estimated R0(t),\n",
   #              "shaded regions show 50%, 90% and 95% uncertainty intervals ",
   #              "in order from darkest to lightest.")) +
-  theme_hc()
+  theme_hc() +
+  theme(axis.title.y = element_text(angle = 0, vjust=1, margin = margin(l=20,t=50)))
 
 plot_R0_infectivity <- plot_R0 + plot_infectivity + plot_layout(nrow = 2)
+plot_R0_infectivity
 
 ggsave("./Results/Figures/R0_infectivity.png",
        plot_R0_infectivity)
@@ -665,6 +647,7 @@ infectious_report <- sims_df_raw %>%
   
 # Plot model compartments
 model_compartments <- sims_df %>%
+  filter(Date <= "2020-07-31") %>%
   filter(!(name %in% c("R0", "Infectivity"))) %>%
   mutate(name = factor(name, 
                        levels = c("S", "E", "I_symp", "I_asymp", "R"),
@@ -675,7 +658,7 @@ model_compartments <- sims_df %>%
   geom_ribbon(aes(ymin = `25%` / N, ymax = `75%` / N), alpha = 0.5) +
   geom_ribbon(aes(ymin = `5%` / N, ymax = `95%` / N), alpha = 0.25) +
   geom_ribbon(aes(ymin = `2.5%` / N, ymax = `97.5%` / N), alpha = 0.125) +
-  xlab("") + ylab("") +
+  xlab("") + ylab("Population\nfraction") +
   ggtitle("SEIR compartments",
           glue("Black line shows median fraction of population,\n",
                "shaded regions show 50%, 90% and 95% uncertainty intervals ",
@@ -683,12 +666,10 @@ model_compartments <- sims_df %>%
   theme_hc() +
   facet_grid(name ~ ., scales = "free_y") +
   theme(panel.spacing = unit(1.25, "lines")) +
-  theme(strip.text.y.right = element_text(angle = 0))
-  # theme(panel.background = element_rect(fill = NA, 
-  #                                       color = "black",
-  #                                       size = 1/10,
-  #                                       linetype = "solid"))
-
+  theme(strip.text.y.right = element_text(angle = 0)) +
+  theme(axis.title.y = element_text(angle = 0, vjust=1.075,margin = margin(l=20)))
+model_compartments
+  
 ggsave("./Results/Figures/model_compartments.png",
        model_compartments)
 
